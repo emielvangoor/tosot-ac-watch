@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     
     steps:
       - name: Checkout code
@@ -47,6 +50,8 @@ jobs:
       
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
+        if: github.event_name == 'push'
+        continue-on-error: true
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: Release ${{ steps.version.outputs.VERSION }}
@@ -57,5 +62,4 @@ jobs:
             ${{ github.event.head_commit.message }}
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
