@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -338,7 +339,46 @@ func main() {
 		// Get device key
 		deviceKey, err := bindAndGetKey(deviceMAC, deviceIP)
 		if err != nil {
-			fmt.Printf("Failed to bind: %v\n", err)
+			fmt.Printf("[%s] Failed to bind: %v\n", time.Now().Format("15:04:05"), err)
+			
+			// Check if device is reachable on network
+			pingCmd := fmt.Sprintf("ping -c 1 -W 1 %s > /dev/null 2>&1", deviceIP)
+			pingErr := exec.Command("sh", "-c", pingCmd).Run()
+			
+			if pingErr == nil {
+				// Device is on network but not responding to protocol - likely H5 error
+				fmt.Printf("[%s] CRITICAL: Device is on network but not responding to protocol - likely H5/HS error!\n", 
+					time.Now().Format("15:04:05"))
+				
+				// Load journal to log this
+				journal, _ := loadJournal()
+				state, _ := loadState()
+				
+				entry := ErrorEntry{
+					Timestamp:       time.Now(),
+					ErrorCode:       0,
+					AllErr:          0,
+					ErrMsg:          0,
+					WarnCode:        0,
+					ProtCode:        0,
+					Action:          "detected_network_no_protocol",
+					Temperature:     state.LastTemperature,
+					DetectedBy:      "network_ping_ok_protocol_fail",
+					CurrentTemp:     0,
+					PowerState:      -1, // Unknown
+					Mode:            state.LastMode,
+					FanSpeed:        state.LastFanSpeed,
+					TempDifference:  0,
+				}
+				journal.Entries = append(journal.Entries, entry)
+				journal.ErrorCounts = append(journal.ErrorCounts, time.Now())
+				saveJournal(journal)
+				
+				// Try to scan to confirm
+				fmt.Printf("[%s] Running scan to confirm device is not responding...\n", 
+					time.Now().Format("15:04:05"))
+			}
+			
 			time.Sleep(1 * time.Minute)
 			continue
 		}
