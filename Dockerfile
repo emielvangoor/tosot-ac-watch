@@ -7,14 +7,7 @@ RUN apk add --no-cache git
 # Set working directory
 WORKDIR /app
 
-# Copy go mod files
-COPY go.mod ./
-COPY watch/go.mod ./watch/
-
-# Download dependencies
-RUN go mod download
-
-# Copy source code
+# Copy all source code
 COPY . .
 
 # Build both applications

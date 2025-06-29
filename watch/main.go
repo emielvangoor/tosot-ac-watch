@@ -214,8 +214,16 @@ func sendCommand(deviceMAC, deviceIP, deviceKey, command string, value int) erro
 	return err
 }
 
+func getDataPath(filename string) string {
+	// Check if running in Docker
+	if _, err := os.Stat("/app/data"); err == nil {
+		return fmt.Sprintf("/app/data/%s", filename)
+	}
+	return filename
+}
+
 func loadState() (*ACState, error) {
-	data, err := ioutil.ReadFile("ac_state.json")
+	data, err := ioutil.ReadFile(getDataPath("ac_state.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &ACState{}, nil
@@ -233,11 +241,11 @@ func saveState(state *ACState) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile("ac_state.json", data, 0644)
+	return ioutil.WriteFile(getDataPath("ac_state.json"), data, 0644)
 }
 
 func loadJournal() (*ErrorJournal, error) {
-	data, err := ioutil.ReadFile("error_journal.json")
+	data, err := ioutil.ReadFile(getDataPath("error_journal.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &ErrorJournal{}, nil
@@ -255,7 +263,7 @@ func saveJournal(journal *ErrorJournal) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile("error_journal.json", data, 0644)
+	return ioutil.WriteFile(getDataPath("error_journal.json"), data, 0644)
 }
 
 func shouldWaitForCooldown(journal *ErrorJournal) bool {
