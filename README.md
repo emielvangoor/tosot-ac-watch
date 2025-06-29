@@ -20,7 +20,7 @@ docker run -d \
   --name ac-watch \
   --network host \
   -v ac-data:/app/data \
-  bijpolderte/ac-watch:latest
+  tesseractpro/ac-watch:latest
 ```
 
 ### Building from Source
@@ -89,14 +89,14 @@ The watch daemon:
 
 ## Docker Hub
 
-Pre-built images available at: [bijpolderte/ac-watch](https://hub.docker.com/r/bijpolderte/ac-watch)
+Pre-built images available at: [tesseractpro/ac-watch](https://hub.docker.com/r/tesseractpro/ac-watch)
 
 ```bash
 # Latest version
-docker pull bijpolderte/ac-watch:latest
+docker pull tesseractpro/ac-watch:latest
 
 # Specific version
-docker pull bijpolderte/ac-watch:1
+docker pull tesseractpro/ac-watch:1
 ```
 
 ## Protocol

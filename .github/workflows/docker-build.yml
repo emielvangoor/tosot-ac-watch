@@ -39,8 +39,8 @@ jobs:
           context: .
           push: true
           tags: |
-            bijpolderte/ac-watch:latest
-            bijpolderte/ac-watch:${{ steps.version.outputs.VERSION }}
+            tesseractpro/ac-watch:latest
+            tesseractpro/ac-watch:${{ steps.version.outputs.VERSION }}
           platforms: linux/amd64,linux/arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -51,7 +51,7 @@ jobs:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: Release ${{ steps.version.outputs.VERSION }}
           body: |
-            Docker image: `bijpolderte/ac-watch:${{ steps.version.outputs.VERSION }}`
+            Docker image: `tesseractpro/ac-watch:${{ steps.version.outputs.VERSION }}`
             
             ### Changes
             ${{ github.event.head_commit.message }}
