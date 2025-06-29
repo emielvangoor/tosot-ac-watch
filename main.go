@@ -269,8 +269,8 @@ func main() {
 	
 	switch action {
 	case "status":
-		// Request comprehensive status fields
-		statusJSON := fmt.Sprintf(`{"cols":["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod","TemSen"],"mac":"%s","t":"status"}`, deviceMAC)
+		// Request comprehensive status fields including error codes
+		statusJSON := fmt.Sprintf(`{"cols":["Pow","Mod","SetTem","WdSpd","Air","Blo","Health","SwhSlp","Lig","SwingLfRig","SwUpDn","Quiet","Tur","StHt","TemUn","HeatCoolType","TemRec","SvSt","SlpMod","TemSen","ErrCode","AllErr","ErrMsg","WarnCode","ProtCode","DustFull","FanMoto"],"mac":"%s","t":"status"}`, deviceMAC)
 		statusPack, _ := wencrypt([]byte(statusJSON), []byte(deviceKey))
 		
 		statusReq := map[string]interface{}{
@@ -440,6 +440,34 @@ func main() {
 							fmt.Printf("  Low Filter: %d\n", val)
 						case "PumpStop":
 							fmt.Printf("  Pump Stop: %s\n", map[int]string{0: "Off", 1: "On"}[val])
+						case "AllErr":
+							if val != 0 {
+								fmt.Printf("  *** All Errors: %d ***\n", val)
+							} else {
+								fmt.Printf("  All Errors: %d\n", val)
+							}
+						case "ErrMsg":
+							if val != 0 {
+								fmt.Printf("  *** Error Message Code: %d ***\n", val)
+							} else {
+								fmt.Printf("  Error Message Code: %d\n", val)
+							}
+						case "WarnCode":
+							if val != 0 {
+								fmt.Printf("  *** Warning Code: %d ***\n", val)
+							} else {
+								fmt.Printf("  Warning Code: %d\n", val)
+							}
+						case "ProtCode":
+							if val != 0 {
+								fmt.Printf("  *** Protection Code: %d ***\n", val)
+							} else {
+								fmt.Printf("  Protection Code: %d\n", val)
+							}
+						case "DustFull":
+							fmt.Printf("  Dust Full: %s\n", map[int]string{0: "No", 1: "Yes"}[val])
+						case "FanMoto":
+							fmt.Printf("  Fan Motor: %d\n", val)
 						default:
 							fmt.Printf("  %s: %d\n", col, val)
 						}

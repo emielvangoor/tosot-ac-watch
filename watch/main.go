@@ -23,6 +23,10 @@ type ACState struct {
 type ErrorEntry struct {
 	Timestamp   time.Time `json:"timestamp"`
 	ErrorCode   int       `json:"error_code"`
+	AllErr      int       `json:"all_err"`
+	ErrMsg      int       `json:"err_msg"`
+	WarnCode    int       `json:"warn_code"`
+	ProtCode    int       `json:"prot_code"`
 	Action      string    `json:"action"`
 	Temperature int       `json:"temperature"`
 }
@@ -138,7 +142,7 @@ func getACStatus(deviceMAC, deviceIP, deviceKey string) (map[string]int, error) 
 	}
 	defer conn.Close()
 	
-	statusJSON := fmt.Sprintf(`{"cols":["Pow","SetTem","ErrCode"],"mac":"%s","t":"status"}`, deviceMAC)
+	statusJSON := fmt.Sprintf(`{"cols":["Pow","SetTem","ErrCode","AllErr","ErrMsg","WarnCode","ProtCode"],"mac":"%s","t":"status"}`, deviceMAC)
 	statusPack, _ := watchEncrypt([]byte(statusJSON), []byte(deviceKey))
 	
 	statusReq := map[string]interface{}{
@@ -338,6 +342,10 @@ func main() {
 		power := status["Pow"]
 		temperature := status["SetTem"]
 		errorCode := status["ErrCode"]
+		allErr := status["AllErr"]
+		errMsg := status["ErrMsg"]
+		warnCode := status["WarnCode"]
+		protCode := status["ProtCode"]
 		
 		// If AC is off, do nothing
 		if power == 0 {
@@ -353,16 +361,20 @@ func main() {
 		// Clean old errors
 		cleanOldErrors(journal)
 		
+		// Check if any error is present
+		hasError := errorCode != 0 || allErr != 0 || errMsg != 0 || warnCode != 0 || protCode != 0
+		
 		// Update state with current temperature
-		if errorCode == 0 {
+		if !hasError {
 			state.LastTemperature = temperature
 			state.LastCheck = time.Now()
 			saveState(state)
 		}
 		
 		// Check for errors
-		if errorCode != 0 {
-			fmt.Printf("[%s] ERROR detected! Code: %d\n", time.Now().Format("15:04:05"), errorCode)
+		if hasError {
+			fmt.Printf("[%s] ERROR detected! ErrCode: %d, AllErr: %d, ErrMsg: %d, WarnCode: %d, ProtCode: %d\n", 
+				time.Now().Format("15:04:05"), errorCode, allErr, errMsg, warnCode, protCode)
 			
 			// Check if we should wait due to too many errors
 			if shouldWaitForCooldown(journal) {
