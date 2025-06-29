@@ -13,22 +13,34 @@ import (
 
 const watchKey = "a3K8Bx%2r8Y7#xDh"
 
-// State file to store current temperature
+// State file to store current temperature and AC state
 type ACState struct {
-	LastTemperature int       `json:"last_temperature"`
-	LastCheck       time.Time `json:"last_check"`
+	LastTemperature    int       `json:"last_temperature"`
+	LastCheck          time.Time `json:"last_check"`
+	LastPowerState     int       `json:"last_power_state"`
+	LastMode           int       `json:"last_mode"`
+	LastCurrentTemp    int       `json:"last_current_temp"`
+	TempStableCount    int       `json:"temp_stable_count"`
+	LastFanSpeed       int       `json:"last_fan_speed"`
+	UnexpectedOffCount int       `json:"unexpected_off_count"`
 }
 
 // Error journal entry
 type ErrorEntry struct {
-	Timestamp   time.Time `json:"timestamp"`
-	ErrorCode   int       `json:"error_code"`
-	AllErr      int       `json:"all_err"`
-	ErrMsg      int       `json:"err_msg"`
-	WarnCode    int       `json:"warn_code"`
-	ProtCode    int       `json:"prot_code"`
-	Action      string    `json:"action"`
-	Temperature int       `json:"temperature"`
+	Timestamp       time.Time `json:"timestamp"`
+	ErrorCode       int       `json:"error_code"`
+	AllErr          int       `json:"all_err"`
+	ErrMsg          int       `json:"err_msg"`
+	WarnCode        int       `json:"warn_code"`
+	ProtCode        int       `json:"prot_code"`
+	Action          string    `json:"action"`
+	Temperature     int       `json:"temperature"`
+	DetectedBy      string    `json:"detected_by"` // How the error was detected
+	CurrentTemp     int       `json:"current_temp"`
+	PowerState      int       `json:"power_state"`
+	Mode            int       `json:"mode"`
+	FanSpeed        int       `json:"fan_speed"`
+	TempDifference  int       `json:"temp_difference"` // SetTemp - CurrentTemp
 }
 
 // Journal file structure
@@ -142,7 +154,7 @@ func getACStatus(deviceMAC, deviceIP, deviceKey string) (map[string]int, error) 
 	}
 	defer conn.Close()
 	
-	statusJSON := fmt.Sprintf(`{"cols":["Pow","SetTem","ErrCode","AllErr","ErrMsg","WarnCode","ProtCode"],"mac":"%s","t":"status"}`, deviceMAC)
+	statusJSON := fmt.Sprintf(`{"cols":["Pow","SetTem","TemSen","Mod","WdSpd","ErrCode","AllErr","ErrMsg","WarnCode","ProtCode"],"mac":"%s","t":"status"}`, deviceMAC)
 	statusPack, _ := watchEncrypt([]byte(statusJSON), []byte(deviceKey))
 	
 	statusReq := map[string]interface{}{
@@ -340,19 +352,15 @@ func main() {
 		}
 		
 		power := status["Pow"]
-		temperature := status["SetTem"]
+		setTemperature := status["SetTem"]
+		currentTemp := status["TemSen"]
+		mode := status["Mod"]
+		fanSpeed := status["WdSpd"]
 		errorCode := status["ErrCode"]
 		allErr := status["AllErr"]
 		errMsg := status["ErrMsg"]
 		warnCode := status["WarnCode"]
 		protCode := status["ProtCode"]
-		
-		// If AC is off, do nothing
-		if power == 0 {
-			fmt.Printf("[%s] AC is off, skipping...\n", time.Now().Format("15:04:05"))
-			time.Sleep(1 * time.Minute)
-			continue
-		}
 		
 		// Load state and journal
 		state, _ := loadState()
@@ -361,20 +369,115 @@ func main() {
 		// Clean old errors
 		cleanOldErrors(journal)
 		
-		// Check if any error is present
-		hasError := errorCode != 0 || allErr != 0 || errMsg != 0 || warnCode != 0 || protCode != 0
+		// If AC is off, check if it was unexpected
+		if power == 0 {
+			if state.LastPowerState == 1 {
+				// AC was on before, now it's off - might be H5 error
+				state.UnexpectedOffCount++
+				fmt.Printf("[%s] WARNING: AC unexpectedly turned off! (count: %d)\n", 
+					time.Now().Format("15:04:05"), state.UnexpectedOffCount)
+				
+				if state.UnexpectedOffCount >= 2 {
+					// Likely an H5 error - treat as error condition
+					entry := ErrorEntry{
+						Timestamp:       time.Now(),
+						ErrorCode:       0,
+						AllErr:          0,
+						ErrMsg:          0,
+						WarnCode:        0,
+						ProtCode:        0,
+						Action:          "detected_unexpected_off",
+						Temperature:     state.LastTemperature,
+						DetectedBy:      "unexpected_power_off",
+						CurrentTemp:     currentTemp,
+						PowerState:      power,
+						Mode:            mode,
+						FanSpeed:        fanSpeed,
+						TempDifference:  setTemperature - currentTemp,
+					}
+					journal.Entries = append(journal.Entries, entry)
+					journal.ErrorCounts = append(journal.ErrorCounts, time.Now())
+					saveJournal(journal)
+					
+					// Reset counter
+					state.UnexpectedOffCount = 0
+				}
+			}
+			state.LastPowerState = 0
+			saveState(state)
+			fmt.Printf("[%s] AC is off, skipping...\n", time.Now().Format("15:04:05"))
+			time.Sleep(1 * time.Minute)
+			continue
+		}
 		
-		// Update state with current temperature
+		// AC is on - reset unexpected off counter
+		if state.LastPowerState == 0 {
+			state.UnexpectedOffCount = 0
+		}
+		
+		// Check for direct errors
+		hasDirectError := errorCode != 0 || allErr != 0 || errMsg != 0 || warnCode != 0 || protCode != 0
+		
+		// Check for indirect error indicators (H5 detection)
+		hasIndirectError := false
+		indirectErrorReason := ""
+		
+		// 1. Check if temperature is not dropping when in cooling mode
+		if mode == 1 && currentTemp > 0 { // Mode 1 = Cool
+			tempDiff := currentTemp - setTemperature
+			
+			// If current temp is 5+ degrees higher than set temp for stable count
+			if tempDiff >= 5 {
+				state.TempStableCount++
+				if state.TempStableCount >= 5 { // 5 minutes of no cooling
+					hasIndirectError = true
+					indirectErrorReason = fmt.Sprintf("no_cooling_detected (diff: %d°C)", tempDiff)
+					fmt.Printf("[%s] WARNING: AC not cooling! Set: %d°C, Current: %d°C, Diff: %d°C\n", 
+						time.Now().Format("15:04:05"), setTemperature, currentTemp, tempDiff)
+				}
+			} else {
+				state.TempStableCount = 0
+			}
+		}
+		
+		// 2. Check if fan speed suddenly dropped to 0 or very low when it should be running
+		if state.LastFanSpeed > 2 && fanSpeed == 0 && mode != 0 { // Not in auto mode
+			hasIndirectError = true
+			indirectErrorReason = "fan_stopped_unexpectedly"
+			fmt.Printf("[%s] WARNING: Fan stopped unexpectedly! Was: %d, Now: %d\n", 
+				time.Now().Format("15:04:05"), state.LastFanSpeed, fanSpeed)
+		}
+		
+		// 3. Check if mode changed unexpectedly
+		if state.LastMode > 0 && mode != state.LastMode {
+			fmt.Printf("[%s] WARNING: Mode changed! Was: %d, Now: %d\n", 
+				time.Now().Format("15:04:05"), state.LastMode, mode)
+		}
+		
+		// Combine error detection
+		hasError := hasDirectError || hasIndirectError
+		
+		// Update state
+		state.LastPowerState = power
+		state.LastTemperature = setTemperature
+		state.LastCurrentTemp = currentTemp
+		state.LastMode = mode
+		state.LastFanSpeed = fanSpeed
+		state.LastCheck = time.Now()
+		
 		if !hasError {
-			state.LastTemperature = temperature
-			state.LastCheck = time.Now()
 			saveState(state)
 		}
 		
 		// Check for errors
 		if hasError {
-			fmt.Printf("[%s] ERROR detected! ErrCode: %d, AllErr: %d, ErrMsg: %d, WarnCode: %d, ProtCode: %d\n", 
-				time.Now().Format("15:04:05"), errorCode, allErr, errMsg, warnCode, protCode)
+			if hasDirectError {
+				fmt.Printf("[%s] DIRECT ERROR detected! ErrCode: %d, AllErr: %d, ErrMsg: %d, WarnCode: %d, ProtCode: %d\n", 
+					time.Now().Format("15:04:05"), errorCode, allErr, errMsg, warnCode, protCode)
+			} else {
+				fmt.Printf("[%s] INDIRECT ERROR detected! Reason: %s\n", 
+					time.Now().Format("15:04:05"), indirectErrorReason)
+			}
 			
 			// Check if we should wait due to too many errors
 			if shouldWaitForCooldown(journal) {
@@ -382,10 +485,20 @@ func main() {
 				
 				// Log this in journal
 				entry := ErrorEntry{
-					Timestamp:   time.Now(),
-					ErrorCode:   errorCode,
-					Action:      "cooldown_wait",
-					Temperature: state.LastTemperature,
+					Timestamp:       time.Now(),
+					ErrorCode:       errorCode,
+					AllErr:          allErr,
+					ErrMsg:          errMsg,
+					WarnCode:        warnCode,
+					ProtCode:        protCode,
+					Action:          "cooldown_wait",
+					Temperature:     state.LastTemperature,
+					DetectedBy:      "cooldown",
+					CurrentTemp:     currentTemp,
+					PowerState:      power,
+					Mode:            mode,
+					FanSpeed:        fanSpeed,
+					TempDifference:  setTemperature - currentTemp,
 				}
 				journal.Entries = append(journal.Entries, entry)
 				saveJournal(journal)
@@ -395,11 +508,26 @@ func main() {
 			}
 			
 			// Log error
+			detectMethod := "direct_error"
+			if hasIndirectError && !hasDirectError {
+				detectMethod = indirectErrorReason
+			}
+			
 			entry := ErrorEntry{
-				Timestamp:   time.Now(),
-				ErrorCode:   errorCode,
-				Action:      "restart_attempt",
-				Temperature: state.LastTemperature,
+				Timestamp:       time.Now(),
+				ErrorCode:       errorCode,
+				AllErr:          allErr,
+				ErrMsg:          errMsg,
+				WarnCode:        warnCode,
+				ProtCode:        protCode,
+				Action:          "restart_attempt",
+				Temperature:     state.LastTemperature,
+				DetectedBy:      detectMethod,
+				CurrentTemp:     currentTemp,
+				PowerState:      power,
+				Mode:            mode,
+				FanSpeed:        fanSpeed,
+				TempDifference:  setTemperature - currentTemp,
 			}
 			journal.Entries = append(journal.Entries, entry)
 			journal.ErrorCounts = append(journal.ErrorCounts, time.Now())
@@ -438,7 +566,25 @@ func main() {
 				}
 			}
 		} else {
-			fmt.Printf("[%s] AC OK - Power: ON, Temp: %d°C\n", time.Now().Format("15:04:05"), temperature)
+			// Reset temperature stable count when no issues
+			if state.TempStableCount > 0 {
+				state.TempStableCount = 0
+				saveState(state)
+			}
+			
+			statusMsg := fmt.Sprintf("[%s] AC OK - Power: ON, Set: %d°C", 
+				time.Now().Format("15:04:05"), setTemperature)
+			
+			if currentTemp > 0 {
+				statusMsg += fmt.Sprintf(", Current: %d°C (diff: %d)", 
+					currentTemp, currentTemp - setTemperature)
+			}
+			
+			modeStr := map[int]string{0: "Auto", 1: "Cool", 2: "Dry", 3: "Fan", 4: "Heat"}[mode]
+			fanStr := map[int]string{0: "Auto", 1: "Low", 2: "Med-Low", 3: "Med", 4: "Med-High", 5: "High"}[fanSpeed]
+			
+			statusMsg += fmt.Sprintf(", Mode: %s, Fan: %s", modeStr, fanStr)
+			fmt.Println(statusMsg)
 		}
 		
 		// Wait for next check

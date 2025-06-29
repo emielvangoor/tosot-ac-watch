@@ -423,7 +423,11 @@ func main() {
 						case "AirCpFail":
 							fmt.Printf("  Air Compressor Fail: %d\n", val)
 						case "ErrCode":
-							fmt.Printf("  Error Code: %d\n", val)
+							if val != 0 {
+								fmt.Printf("  *** Error Code: %d ***\n", val)
+							} else {
+								fmt.Printf("  Error Code: %d\n", val)
+							}
 						case "FilterRst":
 							fmt.Printf("  Filter Reset: %d\n", val)
 						case "MediumFilter":
